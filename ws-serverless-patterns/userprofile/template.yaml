@@ -1,10 +1,198 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: >
-  SAM Template for Module 4 (user profiles)
+Description: Serverless Workshop Module 4 - Asynchronous Pattern with EventBridge and SQS
 
+Parameters:
+  UserPool:
+    Type: String
+    Description: User Pool Id from Module 2
+  Service:
+    Type: String
+    Default: userprofile
+  Stage:
+    Type: String
+    Default: prod
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
+  Function:
+    Timeout: 20
+    Tracing: Active
+    Layers:
+      - !Sub arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPython:20
+  Api:
+    TracingEnabled: true
 
 Resources:
+  UserAddressesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${AWS::StackName}-AddressTable
+      AttributeDefinitions:
+        - AttributeName: "user_id"
+          AttributeType: "S"
+        - AttributeName: "address_id"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "user_id"
+          KeyType: "HASH"
+        - AttributeName: "address_id"
+          KeyType: "RANGE"
+      BillingMode: PAY_PER_REQUEST
 
+  AddressBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub "Address-${AWS::StackName}"
+      
+  AddUserAddressFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/api/address
+      Handler: add_user_address.lambda_handler
+      Runtime: python3.12
+      Tracing: Active
+      Policies:
+        DynamoDBCrudPolicy:
+          TableName: !Ref UserAddressesTable
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref UserAddressesTable
+      Events:
+        Trigger:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: !Ref AddressBus
+            Pattern:
+              source: 
+                - customer-profile
+              detail-type:
+                - address.added
+  EditUserAddressFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/api/address
+      Handler: edit_user_address.lambda_handler
+      Runtime: python3.12
+      Tracing: Active
+      Policies:
+        DynamoDBCrudPolicy:
+          TableName: !Ref UserAddressesTable
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref UserAddressesTable
+          POWERTOOLS_SERVICE_NAME: serverless-workshop
+      Events:
+        Trigger:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: !Ref AddressBus
+            Pattern:
+              source:
+                - customer-profile
+              detail-type:
+                - address.updated
+  
+  DeleteUserAddressFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/api/address
+      Handler: delete_user_address.lambda_handler
+      Runtime: python3.12
+      Tracing: Active
+      Policies:
+        DynamoDBCrudPolicy:
+          TableName: !Ref UserAddressesTable
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref UserAddressesTable
+          POWERTOOLS_SERVICE_NAME: serverless-workshop
+      Events:
+        Trigger:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: !Ref AddressBus
+            Pattern:
+              source:
+                - customer-profile
+              detail-type:
+                - address.deleted
+
+  ApiGatewayEventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: !Join ["", ["/", !Ref "AWS::StackName", "/"]]
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: AllowApiGatewayServiceToAssumeRole
+            Effect: Allow
+            Action:
+              - 'sts:AssumeRole'
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+      Policies:
+        - PolicyName: EBPutEvents
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'events:PutEvents'
+                Resource:
+                  - !GetAtt AddressBus.Arn
+  
+  ProfileApiGateway:
+    Type: AWS::Serverless::Api
+    DependsOn:
+    - ApiGatewayEventBridgeRole
+
+    Properties:
+      StageName: !Ref Stage
+      Auth:
+        DefaultAuthorizer: MyCognitoAuthorizer
+        Authorizers:
+          MyCognitoAuthorizer:
+            UserPoolArn: !Sub arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${UserPool}
+      EndpointConfiguration:
+        Type: REGIONAL
+      TracingEnabled: true
+      MethodSettings:
+        - LoggingLevel: INFO
+          ResourcePath: '/*' # allows for logging on any resource
+          HttpMethod: '*' # allows for logging on any method
+      DefinitionBody:
+        Fn::Transform:
+          Name: AWS::Include
+          Parameters:
+              Location: api.yaml
+  ListUserAddressesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/api/address
+      Handler: list_user_addresses.lambda_handler
+      Runtime: python3.12
+      Policies:
+        DynamoDBReadPolicy:
+          TableName: !Ref UserAddressesTable
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref UserAddressesTable
+
+  ListUserAddressesPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !Ref ListUserAddressesFunction
+      Principal: "apigateway.amazonaws.com"
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ProfileApiGateway}/*/GET/address'
 Outputs:
+  AddressBus:
+      Description: "Address Event Bus"
+      Value: !Ref AddressBus
+  AddressTable:
+    Description: "DynamoDB User Address Table"
+    Value: !Ref UserAddressesTable
+  ProfileApiEndpoint:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${ProfileApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/"

@@ -1,0 +1,13 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "ws-serverless-patterns-userprofile"
+resolve_s3 = true
+s3_prefix = "ws-serverless-patterns-userprofile"
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "UserPool=\"ws-serverless-patterns\" Service=\"userprofile\" Stage=\"prod\""
+image_repositories = []
+
+[default.global.parameters]
+region = "us-east-1"
