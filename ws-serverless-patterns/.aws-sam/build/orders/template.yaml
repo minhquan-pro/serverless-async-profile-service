@@ -1,0 +1,260 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'SAM Template for module3
+
+  '
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+  Service:
+    Type: String
+    Default: workshop-module4-sync
+  UserPool:
+    Type: String
+    Description: User Pool Id from module 2 end state
+Globals:
+  Function:
+    Timeout: 15
+    Tracing: Active
+    Environment:
+      Variables:
+        POWERTOOLS_SERVICE_NAME: orders
+        POWERTOOLS_METRICS_NAMESPACE: ServerlessWorkshop
+    Layers:
+    - Fn::Sub: arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:19
+  Api:
+    TracingEnabled: true
+Resources:
+  WorkshopApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName:
+        Ref: Stage
+      EndpointConfiguration:
+        Type: REGIONAL
+      TracingEnabled: true
+      MethodSettings:
+      - LoggingLevel: INFO
+        ResourcePath: /*
+        HttpMethod: '*'
+      AccessLogSetting:
+        DestinationArn:
+          Fn::GetAtt:
+          - AccessLogs
+          - Arn
+        Format: '{ "requestId":"$context.requestId", "ip": "$context.identity.sourceIp",
+          "requestTime":"$context.requestTime", "httpMethod":"$context.httpMethod","routeKey":"$context.routeKey",
+          "status":"$context.status","protocol":"$context.protocol", "integrationStatus":
+          $context.integrationStatus, "integrationLatency": $context.integrationLatency,
+          "responseLength":"$context.responseLength" }'
+      Auth:
+        DefaultAuthorizer: MyCognitoAuthorizer
+        Authorizers:
+          MyCognitoAuthorizer:
+            UserPoolArn:
+              Fn::Sub: arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${UserPool}
+  AccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 30
+      LogGroupName:
+        Fn::Sub: /${AWS::StackName}/APIAccessLogs
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: userId
+        AttributeType: S
+      - AttributeName: orderId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: userId
+        KeyType: HASH
+      - AttributeName: orderId
+        KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+  IdempotencyTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: id
+        AttributeType: S
+      KeySchema:
+      - AttributeName: id
+        KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiration
+        Enabled: true
+      BillingMode: PAY_PER_REQUEST
+  AddOrderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: AddOrderFunction
+      Handler: create_order.lambda_handler
+      Runtime: python3.12
+      Tracing: Active
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: OrdersTable
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: IdempotencyTable
+      Environment:
+        Variables:
+          TABLE_NAME:
+            Ref: OrdersTable
+          IDEMPOTENCY_TABLE_NAME:
+            Ref: IdempotencyTable
+          POWERTOOLS_SERVICE_NAME:
+            Ref: Service
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /orders
+            Method: post
+            RestApiId:
+              Ref: WorkshopApiGateway
+    Metadata:
+      SamResourceId: AddOrderFunction
+  GetOrderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: GetOrderFunction
+      Handler: get_order.lambda_handler
+      Runtime: python3.12
+      Tracing: Active
+      Policies:
+        DynamoDBReadPolicy:
+          TableName:
+            Ref: OrdersTable
+      Environment:
+        Variables:
+          TABLE_NAME:
+            Ref: OrdersTable
+          POWERTOOLS_SERVICE_NAME:
+            Ref: Service
+      Layers:
+      - Ref: PyUtils
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /orders/{orderId}
+            Method: get
+            RestApiId:
+              Ref: WorkshopApiGateway
+    Metadata:
+      SamResourceId: GetOrderFunction
+  ListOrdersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ListOrdersFunction
+      Handler: list_orders.lambda_handler
+      Runtime: python3.12
+      Tracing: Active
+      Policies:
+        DynamoDBReadPolicy:
+          TableName:
+            Ref: OrdersTable
+      Environment:
+        Variables:
+          TABLE_NAME:
+            Ref: OrdersTable
+          POWERTOOLS_SERVICE_NAME:
+            Ref: Service
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /orders
+            Method: get
+            RestApiId:
+              Ref: WorkshopApiGateway
+    Metadata:
+      SamResourceId: ListOrdersFunction
+  CancelOrderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: CancelOrderFunction
+      Handler: cancel_order.lambda_handler
+      Runtime: python3.12
+      Tracing: Active
+      Policies:
+        DynamoDBCrudPolicy:
+          TableName:
+            Ref: OrdersTable
+      Environment:
+        Variables:
+          TABLE_NAME:
+            Ref: OrdersTable
+          POWERTOOLS_SERVICE_NAME:
+            Ref: Service
+      Layers:
+      - Ref: PyUtils
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /orders/{orderId}
+            Method: delete
+            RestApiId:
+              Ref: WorkshopApiGateway
+    Metadata:
+      SamResourceId: CancelOrderFunction
+  EditOrderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: EditOrderFunction
+      Handler: edit_order.lambda_handler
+      Runtime: python3.12
+      Tracing: Active
+      Policies:
+        DynamoDBCrudPolicy:
+          TableName:
+            Ref: OrdersTable
+      Environment:
+        Variables:
+          TABLE_NAME:
+            Ref: OrdersTable
+          POWERTOOLS_SERVICE_NAME:
+            Ref: Service
+      Layers:
+      - Ref: PyUtils
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /orders/{orderId}
+            Method: put
+            RestApiId:
+              Ref: WorkshopApiGateway
+    Metadata:
+      SamResourceId: EditOrderFunction
+  PyUtils:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: pyutils
+      Description: Dependencies for lambda functions
+      ContentUri: PyUtils
+      CompatibleRuntimes:
+      - python3.9
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: python3.9
+      SamResourceId: PyUtils
+Outputs:
+  Module3ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value:
+      Fn::Sub: https://${WorkshopApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/
+  OrdersTable:
+    Description: DynamoDb Orders Table
+    Value:
+      Ref: OrdersTable
+  IdempotencyTable:
+    Description: DynamoDb Idempotency Table
+    Value:
+      Ref: IdempotencyTable

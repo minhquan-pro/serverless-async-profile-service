@@ -1,0 +1,21 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Module 4 start state
+Resources:
+  users:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: users/template.yaml
+    Metadata:
+      SamResourceId: users
+  orders:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: orders/template.yaml
+      Parameters:
+        UserPool:
+          Fn::GetAtt:
+          - users
+          - Outputs.UserPool
+    Metadata:
+      SamResourceId: orders
