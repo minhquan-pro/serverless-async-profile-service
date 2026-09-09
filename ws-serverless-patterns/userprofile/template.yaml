@@ -18,7 +18,7 @@ Globals:
     Timeout: 20
     Tracing: Active
     Layers:
-      - !Sub arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPython:20
+      - !Sub arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPythonV2:19
   Api:
     TracingEnabled: true
 
